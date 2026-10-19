@@ -1,0 +1,12 @@
+# /etc/caddy/Caddyfile. Caddy gets a Let's Encrypt certificate automatically.
+# Point a DNS name (e.g. a free DuckDNS name) at the VM's public IP, and open ports 80/443
+# in the OCI security list AND the VM firewall.
+verlium.example.duckdns.org {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:8000 {
+		flush_interval -1   # stream chat tokens (SSE) immediately
+	}
+	request_body {
+		max_size 210MB
+	}
+}

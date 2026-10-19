@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+# Secrets & local data
+.env
+*.env.local
+server/data/
+wallet/
+**/Wallet_*/
+*.zip
+# Flutter
+app/.dart_tool/
+app/build/
+app/.flutter-plugins*
+app/**/ephemeral/
+app/android/.gradle/
+app/android/local.properties
+app/android/key.properties
+*.jks
+*.keystore
+# IDE
+.idea/
+.vscode/
+*.iml
+data_server.log
+*.egg-info/
