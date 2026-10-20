@@ -31,6 +31,7 @@ select,input[type=number],input[type=text]{font:inherit;color:var(--strong);back
 border:1px solid var(--border);border-radius:8px;padding:5px 8px}
 label{color:var(--muted)}
 svg text{fill:var(--text)}
+svg,img,canvas{-webkit-user-drag:none;user-select:none}
 canvas,svg{max-width:100%}
 </style></head>
 <body><div id="root">$body</div>
@@ -45,6 +46,9 @@ canvas,svg{max-width:100%}
   new ResizeObserver(report).observe(document.getElementById('root'));
   setTimeout(report,50);setTimeout(report,400);
   // The card is sized to its content, so wheel events belong to the chat list.
+  // WebView2 turns drags on SVG/images/selections into OS drag-and-drop, which the chat's file drop
+  // area then catches ("Drop images or videos…"). Widgets never need native drag, so block it.
+  document.addEventListener('dragstart',function(e){e.preventDefault()},true);
   window.addEventListener('wheel',function(e){if(!e.defaultPrevented)post('wheel',e.deltaY)},{passive:true});
   window.addEventListener('error',function(e){post('jserror',String(e.message||e))});
 })();

@@ -34,4 +34,13 @@ void main() {
     expect(t.takeException(), isNull);
     expect(find.byType(Math), findsNWidgets(3)); // two inline + one display; the dollar amounts stay text
   });
+
+  testWidgets('inline math stays in the same paragraph line as the text', (t) async {
+    await t.pumpWidget(_wrap(const RichContent(data: r'Drag $a$ and $b$ and watch $x = 2$. The curve is continuous.')));
+    await t.pumpAndSettle();
+    final paras = t.widgetList<RichText>(find.byType(RichText))
+        .where((r) => r.text.toPlainText().contains('Drag') && r.text.toPlainText().contains('The curve'));
+    expect(paras.length, 1); // one paragraph, formulas embedded as WidgetSpans
+    expect(find.byType(Math), findsNWidgets(3));
+  });
 }

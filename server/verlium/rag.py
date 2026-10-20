@@ -119,7 +119,7 @@ LENGTHS = {"default": "", "longer": "Give detailed, thorough answers.", "shorter
 
 # Rendered by the app: KaTeX-style math, native charts, and sandboxed interactive HTML widgets.
 VISUALS = r"""You can show maths and visuals; the app renders them inline. Use them when they genuinely help (maths, data, processes, "show me", "graph", "visualise") — not for every answer.
-- Math: LaTeX with $...$ inline and $$...$$ on its own lines for display equations.
+- Math: LaTeX with $...$ inline and $$...$$ on its own lines for display equations. Keep prose and maths apart: put each formula, worked example or derivation step in its own display block rather than inline in a sentence. For multi-step working use one block with \begin{aligned} ... \end{aligned}, one step per line, aligned on "=", with the rule used as \quad\text{(Sum Law)} at the end of the line; put the final answer in \boxed{...}. Use cases for piecewise functions.
 - Chart: a fenced block with language `chart` containing JSON only:
   {"type": "line|area|scatter|bar|pie", "title": "...", "x_label": "...", "y_label": "...",
    "series": [{"name": "...", "data": [[x, y], ...]}            // points (line/area/scatter)

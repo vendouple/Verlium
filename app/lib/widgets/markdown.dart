@@ -32,7 +32,7 @@ class VMarkdown extends StatelessWidget {
       selectable: false,
       extensionSet: md.ExtensionSet.gitHubFlavored,
       inlineSyntaxes: [_MathSyntax(), _CiteSyntax()],
-      builders: {'cite': _CiteBuilder(byN, onCitation), 'math': _MathBuilder(fontSize, v.textStrong)},
+      builders: {'cite': _CiteBuilder(byN, onCitation), 'math': _MathBuilder(fontSize, v.textTitle)},
       onTapLink: (text, href, title) {
         if (href != null) launchUrl(Uri.parse(href));
       },
@@ -77,12 +77,18 @@ class _MathBuilder extends MarkdownElementBuilder {
   Widget? visitElementAfterWithContext(
       BuildContext context, md.Element element, TextStyle? preferredStyle, TextStyle? parentStyle) {
     final tex = element.textContent;
-    return Math.tex(
-      tex,
-      mathStyle: MathStyle.text,
-      textStyle: TextStyle(fontSize: fontSize, color: color),
-      onErrorFallback: (_) => Text('\$$tex\$', style: TextStyle(fontSize: fontSize, color: color)),
-    );
+    // Returned as Text.rich so the markdown builder merges it into the paragraph's RichText;
+    // a bare widget would break the line around every formula.
+    return Text.rich(WidgetSpan(
+      alignment: PlaceholderAlignment.baseline,
+      baseline: TextBaseline.alphabetic,
+      child: Math.tex(
+        tex,
+        mathStyle: MathStyle.text,
+        textStyle: TextStyle(fontSize: fontSize * 1.05, color: color),
+        onErrorFallback: (_) => Text('\$$tex\$', style: TextStyle(fontSize: fontSize, color: color)),
+      ),
+    ));
   }
 }
 
@@ -109,10 +115,13 @@ class _CiteBuilder extends MarkdownElementBuilder {
       BuildContext context, md.Element element, TextStyle? preferredStyle, TextStyle? parentStyle) {
     final n = int.parse(element.textContent);
     final c = byN[n];
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 2),
-      child: CitationChip(n: n, citation: c, onTap: c == null || onTap == null ? null : () => onTap!(c)),
-    );
+    return Text.rich(WidgetSpan(
+      alignment: PlaceholderAlignment.middle,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 2),
+        child: CitationChip(n: n, citation: c, onTap: c == null || onTap == null ? null : () => onTap!(c)),
+      ),
+    ));
   }
 }
 

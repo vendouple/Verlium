@@ -137,17 +137,24 @@ class DisplayMath extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final v = context.v;
+    // ChatGPT-style display maths: centred, a size up from body text, bright, with room above and below so
+    // worked steps stand apart from the prose. Wide equations scroll sideways instead of overflowing.
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Center(
-          child: Math.tex(
-            tex,
-            mathStyle: MathStyle.display,
-            textStyle: TextStyle(fontSize: fontSize, color: v.textStrong),
-            onErrorFallback: (e) => Text('\$\$$tex\$\$',
-                style: TextStyle(fontFamily: 'Consolas', fontSize: fontSize - 4, color: v.textMuted)),
+      padding: const EdgeInsets.symmetric(vertical: 14),
+      child: LayoutBuilder(
+        builder: (context, c) => SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minWidth: c.maxWidth),
+            child: Center(
+              child: Math.tex(
+                tex,
+                mathStyle: MathStyle.display,
+                textStyle: TextStyle(fontSize: fontSize * 1.18, color: v.textTitle),
+                onErrorFallback: (e) => Text('\$\$$tex\$\$',
+                    style: TextStyle(fontFamily: 'Consolas', fontSize: fontSize - 4, color: v.textMuted)),
+              ),
+            ),
           ),
         ),
       ),
