@@ -29,12 +29,17 @@ class AskIn(BaseModel):
     incognito: bool = False               # nothing is stored; the client sends its own history
     history: list[HistoryItem] = []       # incognito only
     source_ids: list[str] | None = None   # default: the notebook's selected sources
-    reasoning_effort: str | None = None   # none | low | medium | high (models that support it)
+    reasoning_effort: str | None = None   # none | low | medium | high | xhigh | max (models that support it)
     attachment_ids: list[str] = []        # images / videos uploaded via POST /notebooks/{nid}/attachments
+    replace_from: str | None = None       # editing: this user message and everything after it is dropped first
 
 
 class ThreadPatch(BaseModel):
     title: str
+
+
+class BranchIn(BaseModel):
+    message_id: str                       # user message to branch at; its answer is copied too
 
 
 def sse(event: str, data) -> str:
@@ -101,6 +106,28 @@ async def thread_messages(tid: str):
                               "ORDER BY created_at", {"id": tid})
 
 
+@router.post("/threads/{tid}/branch")
+async def branch_thread(tid: str, body: BranchIn):
+    """Copy the chat up to and including this user message's answer into a new thread."""
+    src = await db.fetch_one(f"SELECT {THREAD_COLS} FROM chat_threads WHERE id=:id AND deleted=0", {"id": tid})
+    msgs = await thread_messages(tid)
+    at = next((i for i, m in enumerate(msgs) if m["id"] == body.message_id), None)
+    if not src or at is None:
+        raise HTTPException(404, "Message not found")
+    end = at + 1 if at + 1 < len(msgs) and msgs[at + 1]["role"] == "assistant" else at
+    new = db.new_id()
+    await db.execute("INSERT INTO chat_threads (id, notebook_id, title) VALUES (:id, :nb, :t)",
+                     {"id": new, "nb": src["notebook_id"], "t": f"{src['title'][:480]} (branch)"})
+    for m in msgs[:end + 1]:  # one by one: JSON columns are NULL on some rows, which a batch bind can't mix
+        await db.execute(
+            "INSERT INTO chat_messages (id, notebook_id, thread_id, role, content, citations, thinking, steps, "
+            "attachments, created_at) VALUES (:id, :nb, :t, :r, :c, :cit, :th, :st, :a, :ca)",
+            {"id": db.new_id(), "nb": m["notebook_id"], "t": new, "r": m["role"], "c": m["content"],
+             "cit": m["citations"], "th": m["thinking"], "st": m["steps"], "a": m["attachments"], "ca": m["created_at"]})
+    return await db.fetch_one(f"SELECT {THREAD_COLS}, :n message_count FROM chat_threads WHERE id=:id",
+                              {"id": new, "n": end + 1})
+
+
 @router.delete("/notebooks/{nid}/chat")
 async def clear_history(nid: str):
     await db.execute("UPDATE chat_messages SET deleted=1 WHERE notebook_id=:id", {"id": nid})
@@ -144,6 +171,11 @@ async def ask(nid: str, body: AskIn):
         else:
             await db.execute("UPDATE chat_threads SET title = CASE WHEN title='New chat' THEN :t ELSE title END "
                              "WHERE id=:id", {"id": thread_id, "t": question[:80]})
+            if body.replace_from:
+                await db.execute(
+                    "UPDATE chat_messages SET deleted=1 WHERE thread_id=:t AND deleted=0 AND created_at >= "
+                    "(SELECT created_at FROM chat_messages WHERE id=:m AND thread_id=:t)",
+                    {"t": thread_id, "m": body.replace_from})
         hist = await db.fetch_all(
             "SELECT role, content, attachments FROM (SELECT role, content, attachments, created_at FROM chat_messages "
             "WHERE thread_id=:id AND deleted=0 ORDER BY created_at DESC FETCH FIRST 12 ROWS ONLY) ORDER BY created_at",

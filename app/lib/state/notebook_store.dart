@@ -48,7 +48,7 @@ class NotebookStore extends ChangeNotifier {
   String? threadId; // null = a fresh chat that has no thread yet
   List<ChatMessage> messages = [];
   bool incognito = false;
-  String? reasoningEffort; // null = model default | none | low | medium | high
+  String? reasoningEffort; // null = model default | none | low | medium | high | xhigh | max
   StreamSubscription<ChatEvent>? _answer;
 
   /// Bumped when something (topic chip, mind-map node, flashcard "Explain") posts to chat,
@@ -273,17 +273,35 @@ class NotebookStore extends ChangeNotifier {
     await Api.I.delete('/threads/${t.id}');
   }
 
+  /// "Branch to new chat": copies the chat up to this user message's answer into a new thread and opens it.
+  Future<void> branchFrom(ChatMessage m) async {
+    if (incognito || threadId == null) return;
+    final t = ChatThread.fromJson(await Api.I.post('/threads/$threadId/branch', {'message_id': m.id}));
+    threads.insert(0, t);
+    await openThread(t.id);
+  }
+
+  /// Edit a sent message: it and everything after it are replaced by the edited question and a new answer.
+  void editMessage(ChatMessage m, String text) {
+    final i = messages.indexOf(m);
+    if (i < 0 || responding || (text.trim().isEmpty && m.attachments.isEmpty)) return;
+    messages.removeRange(i, messages.length);
+    ask(text, attachments: m.attachments, replaceFrom: m.id);
+  }
+
   // ---- ask -------------------------------------------------------------------
-  void ask(String question) {
-    final atts = readyAttachments;
-    if (responding || attachmentsUploading || (question.trim().isEmpty && atts.isEmpty)) return;
+  void ask(String question, {List<ChatAttachment>? attachments, String? replaceFrom}) {
+    final atts = attachments ?? readyAttachments;
+    if (responding || (attachments == null && attachmentsUploading) || (question.trim().isEmpty && atts.isEmpty)) {
+      return;
+    }
     chatRequests.value++;
     final history = [
       for (final m in messages.where((m) => !m.streaming && m.error == null && m.content.isNotEmpty))
         {'role': m.role, 'content': m.content}
     ];
     final userMsg = ChatMessage(id: _uuid.v4(), role: 'user', content: question.trim(), attachments: atts);
-    pending.clear();
+    if (attachments == null) pending.clear();
     final answer = ChatMessage(id: 'pending', role: 'assistant', content: '', streaming: true);
     messages.addAll([userMsg, answer]);
     notifyListeners();
@@ -296,7 +314,8 @@ class NotebookStore extends ChangeNotifier {
             incognito: incognito,
             history: history,
             reasoningEffort: reasoningEffort,
-            attachmentIds: [for (final a in atts) a.id])
+            attachmentIds: [for (final a in atts) a.id],
+            replaceFrom: incognito ? null : replaceFrom)
         .listen(
       (e) {
         switch (e.type) {

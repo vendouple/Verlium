@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -29,6 +31,17 @@ class _ChatPanelState extends State<ChatPanel> {
   final _focus = FocusNode();
   int _lastLen = 0, _lastCount = 0;
   bool _dropping = false;
+  Timer? _dropTimer;
+
+  /// Drag events keep arriving while something is dragged over the chat; if they stop without an
+  /// exit/drop (e.g. a drag that started inside an embedded WebView), hide the overlay anyway.
+  void _showDrop() {
+    if (!_dropping) setState(() => _dropping = true);
+    _dropTimer?.cancel();
+    _dropTimer = Timer(const Duration(milliseconds: 600), () {
+      if (mounted) setState(() => _dropping = false);
+    });
+  }
   bool _stickToBottom = true;
 
   NotebookStore get store => widget.store;
@@ -53,6 +66,7 @@ class _ChatPanelState extends State<ChatPanel> {
 
   @override
   void dispose() {
+    _dropTimer?.cancel();
     store.removeListener(_autoScroll);
     _scroll.dispose();
     _focus.dispose();
@@ -113,11 +127,12 @@ class _ChatPanelState extends State<ChatPanel> {
             Expanded(
               child: DropTarget(
                 enable: hasSources,
-                onDragEntered: (_) => setState(() => _dropping = true),
+                onDragEntered: (_) => _showDrop(),
+                onDragUpdated: (_) => _showDrop(),
                 onDragExited: (_) => setState(() => _dropping = false),
                 onDragDone: (d) {
                   setState(() => _dropping = false);
-                  attachDropped(context, store, d.files);
+                  if (d.files.isNotEmpty) attachDropped(context, store, d.files);
                 },
                 child: Stack(
                   children: [
@@ -209,7 +224,7 @@ class _ChatPanelState extends State<ChatPanel> {
     for (final m in store.messages) {
       if (prev == null || m.createdAt.difference(prev).inMinutes > 30) items.add(_DateSeparator(m.createdAt));
       prev = m.createdAt;
-      items.add(m.role == 'user' ? _UserBubble(m.content, attachments: m.attachments) : _answer(m));
+      items.add(m.role == 'user' ? _UserBubble(message: m, store: store, key: ValueKey(m.id)) : _answer(m));
     }
     items.add(const SizedBox(height: 24));
 
@@ -686,30 +701,161 @@ class _Actions extends StatelessWidget {
   }
 }
 
-class _UserBubble extends StatelessWidget {
-  final String text;
-  final List<ChatAttachment> attachments;
-  const _UserBubble(this.text, {this.attachments = const []});
+class _UserBubble extends StatefulWidget {
+  final ChatMessage message;
+  final NotebookStore store;
+  const _UserBubble({required this.message, required this.store, super.key});
 
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(bottom: 24, left: 48),
+  State<_UserBubble> createState() => _UserBubbleState();
+}
+
+class _UserBubbleState extends State<_UserBubble> {
+  TextEditingController? _edit; // non-null while editing
+
+  ChatMessage get m => widget.message;
+  NotebookStore get store => widget.store;
+
+  @override
+  void dispose() {
+    _edit?.dispose();
+    super.dispose();
+  }
+
+  void _startEdit() => setState(() => _edit = TextEditingController(text: m.content));
+
+  void _cancelEdit() {
+    _edit?.dispose();
+    setState(() => _edit = null);
+  }
+
+  void _submitEdit() {
+    final text = _edit!.text;
+    if (text.trim().isEmpty && m.attachments.isEmpty) return;
+    store.editMessage(m, text); // this bubble is replaced by the edited one
+  }
+
+  Future<void> _branch() async {
+    try {
+      await store.branchFrom(m);
+      if (mounted) toast(context, 'Branched to a new chat');
+    } catch (e) {
+      if (mounted) toast(context, 'Could not branch: $e');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final v = context.v;
+    final busy = store.responding;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 24, left: 48),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          if (m.attachments.isNotEmpty)
+            Padding(
+              padding: EdgeInsets.only(bottom: m.content.isEmpty && _edit == null ? 0 : 8),
+              child: MessageAttachments(attachments: m.attachments),
+            ),
+          if (_edit != null)
+            _editor(v)
+          else ...[
+            if (m.content.isNotEmpty)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                decoration: BoxDecoration(color: v.tonal, borderRadius: BorderRadius.circular(40)),
+                child: Text(m.content, style: vText(16, 24, color: v.textStrong)),
+              ),
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (m.content.isNotEmpty)
+                    _MsgIcon(
+                      tooltip: 'Copy',
+                      icon: Icons.copy_rounded,
+                      onPressed: () {
+                        Clipboard.setData(ClipboardData(text: m.content));
+                        toast(context, 'Copied');
+                      },
+                    ),
+                  _MsgIcon(tooltip: 'Edit message', icon: Icons.edit_outlined, onPressed: busy ? null : _startEdit),
+                  if (!store.incognito)
+                    _MsgIcon(
+                      tooltip: 'Branch to new chat',
+                      icon: Icons.call_split_rounded,
+                      onPressed: busy ? null : _branch,
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _editor(VTokens v) => Container(
+    width: double.infinity,
+    padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+    decoration: BoxDecoration(
+      color: v.tonal,
+      borderRadius: BorderRadius.circular(24),
+      border: Border.all(color: v.outline),
+    ),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
-        if (attachments.isNotEmpty)
-          Padding(
-            padding: EdgeInsets.only(bottom: text.isEmpty ? 0 : 8),
-            child: MessageAttachments(attachments: attachments),
+        CallbackShortcuts(
+          bindings: {
+            const SingleActivator(LogicalKeyboardKey.enter): _submitEdit,
+            const SingleActivator(LogicalKeyboardKey.escape): _cancelEdit,
+          },
+          child: TextField(
+            controller: _edit,
+            autofocus: true,
+            minLines: 1,
+            maxLines: 10,
+            style: vText(16, 24, color: v.textStrong),
+            decoration: const InputDecoration(
+              border: InputBorder.none,
+              enabledBorder: InputBorder.none,
+              focusedBorder: InputBorder.none,
+            ),
           ),
-        if (text.isNotEmpty)
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-            decoration: BoxDecoration(color: context.v.tonal, borderRadius: BorderRadius.circular(40)),
-            child: Text(text, style: vText(16, 24, color: context.v.textStrong)),
-          ),
+        ),
+        const SizedBox(height: 4),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextButton(onPressed: _cancelEdit, child: const Text('Cancel')),
+            const SizedBox(width: 4),
+            FilledButton(onPressed: store.responding ? null : _submitEdit, child: const Text('Send')),
+          ],
+        ),
       ],
     ),
+  );
+}
+
+/// Small muted icon button in a message's action row.
+class _MsgIcon extends StatelessWidget {
+  final String tooltip;
+  final IconData icon;
+  final VoidCallback? onPressed;
+  const _MsgIcon({required this.tooltip, required this.icon, this.onPressed});
+
+  @override
+  Widget build(BuildContext context) => IconButton(
+    tooltip: tooltip,
+    onPressed: onPressed,
+    iconSize: 16,
+    constraints: const BoxConstraints.tightFor(width: 32, height: 32),
+    padding: EdgeInsets.zero,
+    color: context.v.iconMuted,
+    icon: Icon(icon),
   );
 }
 
@@ -768,7 +914,148 @@ class _ZeroState extends StatelessWidget {
   }
 }
 
-const _efforts = {null: 'Auto', 'none': 'Off', 'low': 'Low', 'medium': 'Medium', 'high': 'High'};
+/// Thinking effort stops on the slider, lowest to highest; null (not on the slider) = the model's default.
+const _effortLevels = ['none', 'low', 'medium', 'high', 'xhigh', 'max'];
+const _effortNames = ['Off', 'Low', 'Medium', 'High', 'XHigh', 'Max'];
+
+String _effortLabel(String? e) => e == null ? 'Auto' : _effortNames[_effortLevels.indexOf(e)];
+
+/// Composer chip that opens a thinking-effort slider (Off → Max) with an "Auto" switch for the model default.
+class _EffortControl extends StatelessWidget {
+  final NotebookStore store;
+  const _EffortControl({required this.store});
+
+  @override
+  Widget build(BuildContext context) {
+    final v = context.v;
+    return MenuAnchor(
+      alignmentOffset: const Offset(0, 8),
+      style: MenuStyle(
+        shape: WidgetStatePropertyAll(RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
+      ),
+      menuChildren: [_EffortSlider(store: store)],
+      builder: (context, controller, _) => Tooltip(
+        message: 'Thinking effort',
+        child: InkWell(
+          borderRadius: BorderRadius.circular(999),
+          onTap: () => controller.isOpen ? controller.close() : controller.open(),
+          child: Container(
+            height: 28,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(color: v.outline),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.psychology_outlined, size: 16, color: v.iconMuted),
+                const SizedBox(width: 4),
+                Text(_effortLabel(store.reasoningEffort), style: vText(12, 16, color: v.textMuted)),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _EffortSlider extends StatelessWidget {
+  final NotebookStore store;
+  const _EffortSlider({required this.store});
+
+  @override
+  Widget build(BuildContext context) {
+    final v = context.v;
+    return ListenableBuilder(
+      listenable: store,
+      builder: (context, _) {
+        final effort = store.reasoningEffort;
+        final auto = effort == null;
+        final i = auto ? _effortLevels.indexOf('medium') : _effortLevels.indexOf(effort);
+        return SizedBox(
+          width: 320,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    Text('Thinking effort', style: vText(14, 20, weight: FontWeight.w500, color: v.textStrong)),
+                    const Spacer(),
+                    Text(_effortLabel(effort), style: vText(14, 20, weight: FontWeight.w500, color: v.link)),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Opacity(
+                  opacity: auto ? .45 : 1,
+                  child: Column(
+                    children: [
+                      SliderTheme(
+                        data: SliderTheme.of(context).copyWith(
+                          trackHeight: 4,
+                          overlayShape: SliderComponentShape.noOverlay,
+                          showValueIndicator: ShowValueIndicator.never,
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                          child: Slider(
+                            value: i.toDouble(),
+                            max: _effortLevels.length - 1.0,
+                            divisions: _effortLevels.length - 1,
+                            // Dragging the slider while on Auto picks that level.
+                            onChanged: (x) => store.setReasoningEffort(_effortLevels[x.round()]),
+                          ),
+                        ),
+                      ),
+                      Row(
+                        children: [
+                          for (var k = 0; k < _effortNames.length; k++)
+                            Expanded(
+                              child: Text(
+                                _effortNames[k],
+                                textAlign: TextAlign.center,
+                                style: vText(
+                                  11,
+                                  14,
+                                  weight: !auto && k == i ? FontWeight.w600 : FontWeight.w400,
+                                  color: !auto && k == i ? v.textStrong : v.textMuted,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Divider(height: 1, color: v.divider),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text('Auto (model default)', style: vText(13, 18, color: v.textStrong)),
+                    ),
+                    Switch(
+                      value: auto,
+                      onChanged: (on) => store.setReasoningEffort(on ? null : _effortLevels[i]),
+                    ),
+                  ],
+                ),
+                Text(
+                  'Higher effort thinks longer for harder questions. XHigh and Max only work on models that support them.',
+                  style: vText(12, 16, color: v.textMuted),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
 
 class _QueryBox extends StatelessWidget {
   final TextEditingController controller;
@@ -848,43 +1135,7 @@ class _QueryBox extends StatelessWidget {
                         ),
                       ),
                     ),
-                    PopupMenuButton<String?>(
-                      tooltip: 'Thinking effort',
-                      initialValue: store.reasoningEffort,
-                      position: PopupMenuPosition.over,
-                      onSelected: store.setReasoningEffort,
-                      itemBuilder: (_) => [
-                        PopupMenuItem<String?>(
-                          enabled: false,
-                          height: 28,
-                          child: Text('Thinking effort', style: vText(12, 16, color: v.textMuted)),
-                        ),
-                        for (final e in _efforts.entries)
-                          PopupMenuItem<String?>(
-                            value: e.key,
-                            child: MenuRow(
-                              store.reasoningEffort == e.key ? Icons.check : Icons.psychology_outlined,
-                              e.value,
-                            ),
-                          ),
-                      ],
-                      child: Container(
-                        height: 28,
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(999),
-                          border: Border.all(color: v.outline),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.psychology_outlined, size: 16, color: v.iconMuted),
-                            const SizedBox(width: 4),
-                            Text(_efforts[store.reasoningEffort]!, style: vText(12, 16, color: v.textMuted)),
-                          ],
-                        ),
-                      ),
-                    ),
+                    _EffortControl(store: store),
                     const SizedBox(width: 8),
                     Text('$n source${n == 1 ? '' : 's'}', style: vText(12, 16, color: v.textMuted)),
                     const SizedBox(width: 8),

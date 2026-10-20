@@ -104,6 +104,7 @@ class Api {
     List<Map<String, String>> history = const [],
     String? reasoningEffort,
     List<String> attachmentIds = const [],
+    String? replaceFrom,
   }) async* {
     final req = http.Request('POST', _u('/notebooks/$notebookId/chat'))
       ..headers.addAll(_headers)
@@ -116,6 +117,7 @@ class Api {
         if (incognito) 'history': history,
         'reasoning_effort': ?reasoningEffort,
         if (attachmentIds.isNotEmpty) 'attachment_ids': attachmentIds,
+        'replace_from': ?replaceFrom,
       });
     final resp = await _http.send(req);
     if (resp.statusCode >= 400) {
